@@ -38,7 +38,7 @@ else
 endif
 
 ifneq ($(DEBUG),)
-	CFLAGS += -g
+	CFLAGS += -g -O3
 else
 	CFLAGS += -DNDEBUG=1 -O2
 endif

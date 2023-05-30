@@ -39,6 +39,14 @@ defmodule Exqlite.Sqlite3NIF do
   @spec step(db(), statement()) :: :done | :busy | {:row, row()} | {:error, reason()}
   def step(_conn, _statement), do: :erlang.nif_error(:not_loaded)
 
+  @spec bind_and_step(db(), statement(), list()) ::
+          :done | :busy | {:row, row()} | {:error, reason()}
+  def bind_and_step(_conn, _statement, _args), do: :erlang.nif_error(:not_loaded)
+
+  @spec bind_step_changes(db(), statement(), list()) ::
+          integer() | :busy | {:row, row()} | {:error, reason()}
+  def bind_step_changes(_conn, _statement, _args), do: :erlang.nif_error(:not_loaded)
+
   @spec multi_step(db(), statement(), integer()) ::
           :busy | {:rows, [row()]} | {:done, [row()]} | {:error, reason()}
   def multi_step(_conn, _statement, _chunk_size), do: :erlang.nif_error(:not_loaded)
