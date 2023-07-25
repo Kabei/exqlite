@@ -69,7 +69,7 @@ defmodule Exqlite.Sqlite3 do
 
   See: https://sqlite.org/c3ref/changes.html
   """
-  @spec changes(db()) :: {:ok, integer()} | {:error, reason()}
+  @spec changes(db()) :: integer() | {:error, reason()}
   def changes(conn), do: Sqlite3NIF.changes(conn)
 
   @spec prepare(db(), String.t()) :: {:ok, statement()} | {:error, reason()}
@@ -138,8 +138,8 @@ defmodule Exqlite.Sqlite3 do
 
   defp try_fetch_all(conn, statement, chunk_size) do
     case multi_step(conn, statement, chunk_size) do
-      {:done, rows} -> rows
       {:rows, rows} -> rows ++ try_fetch_all(conn, statement, chunk_size)
+      {:done, rows} -> rows
       {:error, _reason} = error -> throw(error)
       :busy -> throw({:error, "Database busy"})
     end

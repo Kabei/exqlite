@@ -342,7 +342,7 @@ exqlite_changes(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     }
 
     int changes = sqlite3_changes(conn->db);
-    return make_ok_tuple(env, enif_make_int(env, changes));
+    return enif_make_int(env, changes);
 }
 
 ///
@@ -801,6 +801,8 @@ exqlite_bind_step_changes(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 
     int rc = sqlite3_step(statement->statement);
     switch (rc) {
+        case SQLITE_DONE:
+            return enif_make_int(env, sqlite3_changes(conn->db));
         case SQLITE_ROW:
             return enif_make_tuple2(
               env,
@@ -808,8 +810,6 @@ exqlite_bind_step_changes(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
               make_row(env, statement->statement));
         case SQLITE_BUSY:
             return make_atom(env, "busy");
-        case SQLITE_DONE:
-            return enif_make_int(env, sqlite3_changes(conn->db));
         default:
             return make_sqlite3_error_tuple(env, rc, conn->db);
     }
@@ -1154,9 +1154,7 @@ static ErlNifFunc nif_funcs[] = {
   {"bind", 3, exqlite_bind, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"step", 2, exqlite_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"bind_and_step", 3, exqlite_bind_and_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
-  {"bind_step_changes", 3, exqlite_bind_step_changes, ERL_NIF_DIRTY_JOB_IO_BOUND},
-  //   {"query", 2, exqlite_prepare_query, ERL_NIF_DIRTY_JOB_IO_BOUND},
-  
+  {"bind_step_changes", 3, exqlite_bind_step_changes, ERL_NIF_DIRTY_JOB_IO_BOUND},  
   {"multi_step", 3, exqlite_multi_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"columns", 2, exqlite_columns, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"last_insert_rowid", 1, exqlite_last_insert_rowid, ERL_NIF_DIRTY_JOB_IO_BOUND},
