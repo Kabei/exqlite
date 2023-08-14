@@ -820,87 +820,6 @@ exqlite_bind_step_changes(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 }
 
 static ERL_NIF_TERM
-exqlite_bind_step_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{
-    assert(env);
-
-    unsigned int parameter_count      = 0;
-    unsigned int argument_list_length = 0;
-    connection_t* conn                = NULL;
-    statement_t* statement            = NULL;
-    ERL_NIF_TERM list;
-    ERL_NIF_TERM head;
-    ERL_NIF_TERM tail;
-
-    if (argc != 3) {
-        return enif_make_badarg(env);
-    }
-
-    if (!enif_get_resource(env, argv[0], connection_type, (void**)&conn)) {
-        return make_error_tuple(env, "invalid_connection");
-    }
-
-    if (!enif_get_resource(env, argv[1], statement_type, (void**)&statement)) {
-        return make_error_tuple(env, "invalid_statement");
-    }
-
-    if (!enif_get_list_length(env, argv[2], &argument_list_length)) {
-        return make_error_tuple(env, "bad_argument_list");
-    }
-
-    parameter_count = (unsigned int)sqlite3_bind_parameter_count(statement->statement);
-    if (parameter_count != argument_list_length) {
-        return make_error_tuple(env, "arguments_wrong_length");
-    }
-
-    sqlite3_reset(statement->statement);
-
-    list = argv[2];
-    for (unsigned int i = 0; i < argument_list_length; i++) {
-        enif_get_list_cell(env, list, &head, &tail);
-        int rc = bind(env, head, statement->statement, i + 1);
-        if (rc == -1) {
-            return enif_make_tuple2(
-              env,
-              make_atom(env, "error"),
-              enif_make_tuple2(
-                env,
-                make_atom(env, "wrong_type"),
-                head));
-        }
-
-        if (rc != SQLITE_OK) {
-            return make_sqlite3_error_tuple(env, rc, conn->db);
-        }
-
-        list = tail;
-    }
-
-    int rc = sqlite3_step(statement->statement);
-
-    int result;
-    switch (rc) {
-        case SQLITE_ROW:
-            result = enif_make_tuple2(
-              env,
-              make_atom(env, "row"),
-              make_row(env, statement->statement));
-        case SQLITE_BUSY:
-            result = make_atom(env, "busy");
-        case SQLITE_DONE:
-            result = make_atom(env, "done");
-        default:
-            result = make_sqlite3_error_tuple(env, rc, conn->db);
-    }
-    if (statement->statement) {
-        sqlite3_finalize(statement->statement);
-        statement->statement = NULL;
-    }
-
-    return result;
-}
-
-static ERL_NIF_TERM
 exqlite_columns(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     assert(env);
@@ -1240,7 +1159,6 @@ static ErlNifFunc nif_funcs[] = {
   {"step", 2, exqlite_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"bind_step", 3, exqlite_bind_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"bind_step_changes", 3, exqlite_bind_step_changes, ERL_NIF_DIRTY_JOB_IO_BOUND},
-  {"bind_step_release", 3, exqlite_bind_step_release, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"multi_step", 3, exqlite_multi_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"columns", 2, exqlite_columns, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"last_insert_rowid", 1, exqlite_last_insert_rowid, ERL_NIF_DIRTY_JOB_IO_BOUND},
