@@ -1,14 +1,14 @@
 defmodule Exqlite.MixProject do
   use Mix.Project
 
-  @version "0.13.14"
-  @sqlite_version "3.42.0"
+  @version "0.22.0"
+  @sqlite_version "3.45.3"
 
   def project do
     [
       app: :exqlite,
       version: @version,
-      elixir: "~> 1.12",
+      elixir: "~> 1.14",
       compilers: [:elixir_make] ++ Mix.compilers(),
       make_targets: ["all"],
       make_clean: ["clean"],
@@ -18,9 +18,12 @@ defmodule Exqlite.MixProject do
         "https://github.com/elixir-sqlite/exqlite/releases/download/v#{@version}/@{artefact_filename}",
       make_precompiler_filename: "sqlite3_nif",
       make_precompiler_nif_versions: [
-        versions: ["2.15", "2.16"],
-        availability: &target_available_for_nif_version?/2
+        versions: &nif_versions/1,
+        fallback_version: fn opts ->
+          hd(nif_versions(opts))
+        end
       ],
+      make_env: Application.get_env(:exqlite, :make_env, %{}),
       cc_precompiler: cc_precompiler(),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
@@ -53,7 +56,7 @@ defmodule Exqlite.MixProject do
     [
       {:db_connection, "~> 2.1"},
       {:ex_sqlean, "~> 0.8.5", only: [:dev, :test]},
-      {:elixir_make, "~> 0.7", runtime: false},
+      {:elixir_make, "~> 0.8", runtime: false},
       {:cc_precompiler, "~> 0.1", runtime: false},
       {:ex_doc, "~> 0.27", only: :dev, runtime: false},
       {:temp, "~> 0.4", only: [:dev, :test]},
@@ -78,14 +81,6 @@ defmodule Exqlite.MixProject do
       nil
     else
       {:nif, CCPrecompiler}
-    end
-  end
-
-  def target_available_for_nif_version?(target, nif_version) do
-    if String.contains?(target, "windows") do
-      nif_version == "2.16"
-    else
-      true
     end
   end
 
@@ -141,6 +136,15 @@ defmodule Exqlite.MixProject do
     ]
   end
 
+  defp nif_versions(opts) do
+    if String.contains?(opts.target, "windows") or
+         String.contains?(opts.target, "darwin") do
+      ["2.16"]
+    else
+      ["2.15"]
+    end
+  end
+
   defp cc_precompiler do
     [
       cleanup: "clean",
@@ -149,7 +153,10 @@ defmodule Exqlite.MixProject do
           :include_default_ones => true,
           "x86_64-linux-musl" => "x86_64-linux-musl-",
           "aarch64-linux-musl" => "aarch64-linux-musl-",
-          "riscv64-linux-musl" => "riscv64-linux-musl-"
+          "riscv64-linux-musl" => "riscv64-linux-musl-",
+          "x86_64-linux-gnu" => "x86_64-linux-gnu-",
+          "aarch64-linux-gnu" => "aarch64-linux-gnu-",
+          "riscv64-linux-gnu" => "riscv64-linux-gnu-"
         },
         {:unix, :darwin} => %{
           :include_default_ones => true

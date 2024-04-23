@@ -19,7 +19,8 @@ defmodule Exqlite.Sqlite3 do
   @type statement() :: reference()
   @type reason() :: atom() | String.t()
   @type row() :: list()
-  @type open_opt :: {:mode, :readwrite | :readonly}
+  @type open_mode :: :readwrite | :readonly | :nomutex
+  @type open_opt :: {:mode, :readwrite | :readonly | [open_mode()]}
 
   @doc """
   Opens a new sqlite database at the Path provided.
@@ -29,8 +30,10 @@ defmodule Exqlite.Sqlite3 do
   ## Options
 
     * `:mode` - use `:readwrite` to open the database for reading and writing
-      or `:readonly` to open it in read-only mode. `:readwrite` will also create
+      , `:readonly` to open it in read-only mode or `[:readonly | :readwrite, :nomutex]`
+      to open it with no mutex mode. `:readwrite` will also create
       the database if it doesn't already exist. Defaults to `:readwrite`.
+      Note: [:readwrite, :nomutex] is not recommended.
   """
   @spec open(String.t(), [open_opt()]) :: {:ok, db()} | {:error, reason()}
   def open(path, opts \\ []) do
@@ -38,16 +41,41 @@ defmodule Exqlite.Sqlite3 do
     Sqlite3NIF.open(String.to_charlist(path), flags_from_mode(mode))
   end
 
+  defp flags_from_mode(:nomutex) do
+    raise ArgumentError,
+          "expected mode to be `:readwrite` or `:readonly`, can't use a single :nomutex mode"
+  end
+
   defp flags_from_mode(:readwrite),
-    do: Flags.put_file_open_flags([:sqlite_open_readwrite, :sqlite_open_create])
+    do: do_flags_from_mode([:readwrite], [])
 
   defp flags_from_mode(:readonly),
-    do: Flags.put_file_open_flags([:sqlite_open_readonly])
+    do: do_flags_from_mode([:readonly], [])
+
+  defp flags_from_mode([_ | _] = modes),
+    do: do_flags_from_mode(modes, [])
 
   defp flags_from_mode(mode) do
     raise ArgumentError,
-          "expected mode to be `:readwrite` or `:readonly`, but received #{inspect(mode)}"
+          "expected mode to be `:readwrite`, `:readonly` or list of modes, but received #{inspect(mode)}"
   end
+
+  defp do_flags_from_mode([:readwrite | tail], acc),
+    do: do_flags_from_mode(tail, [:sqlite_open_readwrite, :sqlite_open_create | acc])
+
+  defp do_flags_from_mode([:readonly | tail], acc),
+    do: do_flags_from_mode(tail, [:sqlite_open_readonly | acc])
+
+  defp do_flags_from_mode([:nomutex | tail], acc),
+    do: do_flags_from_mode(tail, [:sqlite_open_nomutex | acc])
+
+  defp do_flags_from_mode([mode | _tail], _acc) do
+    raise ArgumentError,
+          "expected mode to be `:readwrite`, `:readonly` or `:nomutex`, but received #{inspect(mode)}"
+  end
+
+  defp do_flags_from_mode([], acc),
+    do: Flags.put_file_open_flags(acc)
 
   @doc """
   Closes the database and releases any underlying resources.
@@ -55,6 +83,13 @@ defmodule Exqlite.Sqlite3 do
   @spec close(db() | nil) :: :ok | {:error, reason()}
   def close(nil), do: :ok
   def close(conn), do: Sqlite3NIF.close(conn)
+
+  @doc """
+  Interrupt a long-running query.
+  """
+  @spec interrupt(db() | nil) :: :ok | {:error, reason()}
+  def interrupt(nil), do: :ok
+  def interrupt(conn), do: Sqlite3NIF.interrupt(conn)
 
   @doc """
   Executes an sql script. Multiple stanzas can be passed at once.
@@ -201,6 +236,60 @@ defmodule Exqlite.Sqlite3 do
     else
       Sqlite3NIF.enable_load_extension(conn, 0)
     end
+  end
+
+  @doc """
+  Send data change notifications to a process.
+
+  Each time an insert, update, or delete is performed on the connection provided
+  as the first argument, a message will be sent to the pid provided as the second argument.
+
+  The message is of the form: `{action, db_name, table, row_id}`, where:
+
+    * `action` is one of `:insert`, `:update` or `:delete`
+    * `db_name` is a string representing the database name where the change took place
+    * `table` is a string representing the table name where the change took place
+    * `row_id` is an integer representing the unique row id assigned by SQLite
+
+  ## Restrictions
+
+    * There are some conditions where the update hook will not be invoked by SQLite.
+      See the documentation for [more details](https://www.sqlite.org/c3ref/update_hook.html)
+    * Only one pid can listen to the changes on a given database connection at a time.
+      If this function is called multiple times for the same connection, only the last pid will
+      receive the notifications
+    * Updates only happen for the connection that is opened. For example, there
+      are two connections A and B. When an update happens on connection B, the
+      hook set for connection A will not receive the update, but the hook for
+      connection B will receive the update.
+  """
+  @spec set_update_hook(db(), pid()) :: :ok | {:error, reason()}
+  def set_update_hook(conn, pid) do
+    Sqlite3NIF.set_update_hook(conn, pid)
+  end
+
+  @doc """
+  Send log messages to a process.
+
+  Each time a message is logged in SQLite a message will be sent to the pid provided as the argument.
+
+  The message is of the form: `{:log, rc, message}`, where:
+
+    * `rc` is an integer [result code](https://www.sqlite.org/rescode.html) or an [extended result code](https://www.sqlite.org/rescode.html#extrc)
+    * `message` is a string representing the log message
+
+  See [`SQLITE_CONFIG_LOG`](https://www.sqlite.org/c3ref/c_config_covering_index_scan.html) and
+  ["The Error And Warning Log"](https://www.sqlite.org/errlog.html) for more details.
+
+  ## Restrictions
+
+    * Only one pid can listen to the log messages at a time.
+      If this function is called multiple times, only the last pid will
+      receive the notifications
+  """
+  @spec set_log_hook(pid()) :: :ok | {:error, reason()}
+  def set_log_hook(pid) do
+    Sqlite3NIF.set_log_hook(pid)
   end
 
   defp convert(%Date{} = val), do: Date.to_iso8601(val)

@@ -1,8 +1,61 @@
 # Changelog
 
-## Unlreleased
+## v0.22.0
 
-## V0.13.14
+- changed: update sqlite to `3.45.3`.
+
+## v0.21.0
+
+- added: `Exqlite.Sqlite3.interrupt/1` to interrupt long running queries in the background.
+
+## v0.20.0
+
+- changed: update sqlite3 to `3.45.2`.
+- changed: use single nif version.
+- changed: use Erlang/OTP 24 (NIF 2.16) for macOS.
+- changed: updated to elixir_make `v0.8.2`.
+
+## v0.19.0
+
+- changed: Dropped support for Elixir v1.13.
+- changed: Updated readme documentation.
+- changed: Updated locked dependencies.
+
+## v0.18.0
+
+- added: Ability to specify build parameters programatically.
+- changed: Updated sqlite3 to `3.44.2`.
+
+## v0.17.0
+
+- changed: Updaetd sqlite3 to `3.44.0`.
+- added: `:before_disconnect` hook.
+
+## v0.16.2
+- fixed: Precompile support for Windows.
+
+## v0.16.1
+- fixed: Precompiled binaries for OTP 26. Windows precompiled binaries should work now.
+
+## v0.16.0
+- added: `set_log_hook`.
+- removed: `utf8.h` as it is not necessary.
+
+## v0.15.0
+- added: `set_update_hook`.
+- fixed: sqlite extension alignment problem by utilizing `size_t`.
+- changed: Drop support for Elixir `1.12`.
+- changed: Drop support for OTP 23.
+- changed: Updated sqlite3 to `3.43.2`.
+
+## v0.14.0
+- changed: Updated sqlite3 to `3.43.1`.
+
+## v0.13.15
+- fixed: allow gnu compiled binaries to be included on the checksum update step.
+- fixed: do not bind atoms that are prefixed with `nil` as `NULL`. https://github.com/elixir-sqlite/exqlite/pull/258
+
+## v0.13.14
 - fixed: OTP26 and Elixir 1.15 compilation issues.
 
 ## v0.13.13

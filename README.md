@@ -27,14 +27,15 @@ Package: https://hex.pm/packages/exqlite
   second column somewhere storing the timezone name and shifting it when you
   get it from the database. This is more reliable than storing the offset as
   `+03:00` as it does not respect daylight savings time.
-
+* When storing `BLOB` values, you have to use `{:blob, the_binary}`, otherwise
+  it will be interpreted as a string. 
 
 ## Installation
 
 ```elixir
 defp deps do
   [
-    {:exqlite, "~> 0.13"}
+    {:exqlite, "~> 0.21"}
   ]
 end
 ```
@@ -71,6 +72,17 @@ You can enable certain features by doing the following:
 
 ```bash
 export EXQLITE_SYSTEM_CFLAGS=-DSQLITE_ENABLE_DBSTAT_VTAB=1
+```
+
+Or you can pass extra environment variables using the Elixir config:
+
+```elixir
+config :exqlite,
+  force_build: true,
+  make_env: %{
+    "EXQLITE_SYSTEM_CFLAGS" => "-DSQLITE_ENABLE_DBSTAT_VTAB=1",
+    "V" => "1"
+  }
 ```
 
 ### Listing Flags Used For Compilation
@@ -160,7 +172,9 @@ The `Exqlite.Sqlite3` module usage is fairly straight forward.
 ### Using SQLite3 native extensions
 
 Exqlite supports loading [run-time loadable SQLite3 extensions](https://www.sqlite.org/loadext.html).
-A selection of precompiled extensions for popular CPU types / architectures is available by installing the [ExSqlean](https://github.com/mindreframer/ex_sqlean) package. This package wraps [SQLean: all the missing SQLite functions](https://github.com/nalgeon/sqlean).
+A selection of precompiled extensions for popular CPU types / architectures is
+available by installing the [ExSqlean](https://github.com/mindreframer/ex_sqlean)
+package. This package wraps [SQLean: all the missing SQLite functions](https://github.com/nalgeon/sqlean).
 
 ```elixir
 alias Exqlite.Basic
@@ -181,6 +195,34 @@ Basic.load_extension(conn, ExSqlean.path_for("re"))
 # close connection
 Basic.close(conn)
 ```
+
+It is also possible to load extensions using the `Connection` configuration. For example:
+
+```elixir
+arch_dir =
+  System.cmd("uname", ["-sm"])
+  |> elem(0)
+  |> String.trim()
+  |> String.replace(" ", "-")
+  |> String.downcase() # => "darwin-arm64"
+
+config :myapp, arch_dir: arch_dir
+
+# global
+config :exqlite, load_extensions: [ "./priv/sqlite/\#{arch_dir}/rotate" ]
+
+# per connection in a Phoenix app
+config :myapp, Myapp.Repo,
+  database: "path/to/db",
+  load_extensions: [
+    "./priv/sqlite/\#{arch_dir}/vector0",
+    "./priv/sqlite/\#{arch_dir}/vss0"
+  ]
+```
+
+See [Exqlite.Connection.connect/1](https://hexdocs.pm/exqlite/Exqlite.Connection.html#connect/1)
+for more information. When using extensions for SQLite3, they must be compiled
+for the environment you are targeting.
 
 ## Why SQLite3
 

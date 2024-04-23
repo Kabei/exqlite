@@ -53,14 +53,57 @@ defmodule Exqlite.Sqlite3Test do
                Sqlite3.execute(ro_conn, insert_value_query)
     end
 
+    test "opens a database in a list of mode" do
+      # Create database with readwrite connection
+      {:ok, path} = Temp.path()
+      {:ok, rw_conn} = Sqlite3.open(path)
+
+      create_table_query = "create table test (id integer primary key, stuff text)"
+      :ok = Sqlite3.execute(rw_conn, create_table_query)
+
+      insert_value_query = "insert into test (stuff) values ('This is a test')"
+      :ok = Sqlite3.execute(rw_conn, insert_value_query)
+
+      # Read from database with a readonly connection
+      {:ok, ro_conn} = Sqlite3.open(path, mode: [:readonly, :nomutex])
+
+      select_query = "select id, stuff from test order by id asc"
+      {:ok, statement} = Sqlite3.prepare(ro_conn, select_query)
+      {:row, columns} = Sqlite3.step(ro_conn, statement)
+
+      assert [1, "This is a test"] == columns
+    end
+
     test "opens a database with invalid mode" do
       {:ok, path} = Temp.path()
 
       msg =
-        "expected mode to be `:readwrite` or `:readonly`, but received :notarealmode"
+        "expected mode to be `:readwrite`, `:readonly` or list of modes, but received :notarealmode"
 
       assert_raise ArgumentError, msg, fn ->
         Sqlite3.open(path, mode: :notarealmode)
+      end
+    end
+
+    test "opens a database with invalid single nomutex mode" do
+      {:ok, path} = Temp.path()
+
+      msg =
+        "expected mode to be `:readwrite` or `:readonly`, can't use a single :nomutex mode"
+
+      assert_raise ArgumentError, msg, fn ->
+        Sqlite3.open(path, mode: :nomutex)
+      end
+    end
+
+    test "opens a database with invalid list of mode" do
+      {:ok, path} = Temp.path()
+
+      msg =
+        "expected mode to be `:readwrite`, `:readonly` or `:nomutex`, but received :notarealmode"
+
+      assert_raise ArgumentError, msg, fn ->
+        Sqlite3.open(path, mode: [:notarealmode])
       end
     end
   end
@@ -156,6 +199,11 @@ defmodule Exqlite.Sqlite3Test do
       {:ok, statement} = Sqlite3.prepare(conn, "insert into test (stuff) values (?1)")
 
       assert statement
+    end
+
+    test "supports utf8 in error messages" do
+      {:ok, conn} = Sqlite3.open(":memory:")
+      assert {:error, "no such table: 🌍"} = Sqlite3.prepare(conn, "select * from 🌍")
     end
   end
 
@@ -260,6 +308,13 @@ defmodule Exqlite.Sqlite3Test do
       {:ok, columns} = Sqlite3.columns(conn, statement)
 
       assert ["id", "stuff"] == columns
+    end
+
+    test "supports utf8 column names" do
+      {:ok, conn} = Sqlite3.open(":memory:")
+      :ok = Sqlite3.execute(conn, "create table test(👋 text, ✍️ text)")
+      {:ok, statement} = Sqlite3.prepare(conn, "select * from test")
+      assert {:ok, ["👋", "✍️"]} = Sqlite3.columns(conn, statement)
     end
   end
 
@@ -409,6 +464,160 @@ defmodule Exqlite.Sqlite3Test do
 
       assert {:ok, statement} = Sqlite3.prepare(conn, "select id, stuff from test")
       assert {:row, [1, "hello"]} = Sqlite3.step(conn, statement)
+    end
+  end
+
+  describe "set_update_hook/2" do
+    defmodule ChangeListener do
+      use GenServer
+
+      def start_link({parent, name}),
+        do: GenServer.start_link(__MODULE__, {parent, name})
+
+      def init({parent, name}), do: {:ok, {parent, name}}
+
+      def handle_info({_action, _db, _table, _row_id} = change, {parent, name}) do
+        send(parent, {change, name})
+        {:noreply, {parent, name}}
+      end
+    end
+
+    setup do
+      {:ok, path} = Temp.path()
+      {:ok, conn} = Sqlite3.open(path)
+      :ok = Sqlite3.execute(conn, "create table test(num integer)")
+
+      on_exit(fn ->
+        Sqlite3.close(conn)
+        File.rm(path)
+      end)
+
+      [conn: conn, path: path]
+    end
+
+    test "can listen to data change notifications", context do
+      {:ok, listener_pid} = ChangeListener.start_link({self(), :listener})
+      Sqlite3.set_update_hook(context.conn, listener_pid)
+
+      :ok = Sqlite3.execute(context.conn, "insert into test(num) values (10)")
+      :ok = Sqlite3.execute(context.conn, "insert into test(num) values (11)")
+      :ok = Sqlite3.execute(context.conn, "update test set num = 1000")
+      :ok = Sqlite3.execute(context.conn, "delete from test where num = 1000")
+
+      assert_receive {{:insert, "main", "test", 1}, _}, 1000
+      assert_receive {{:insert, "main", "test", 2}, _}, 1000
+      assert_receive {{:update, "main", "test", 1}, _}, 1000
+      assert_receive {{:update, "main", "test", 2}, _}, 1000
+      assert_receive {{:delete, "main", "test", 1}, _}, 1000
+      assert_receive {{:delete, "main", "test", 2}, _}, 1000
+    end
+
+    test "only one pid can listen at a time", context do
+      {:ok, listener1_pid} = ChangeListener.start_link({self(), :listener1})
+      {:ok, listener2_pid} = ChangeListener.start_link({self(), :listener2})
+
+      Sqlite3.set_update_hook(context.conn, listener1_pid)
+      :ok = Sqlite3.execute(context.conn, "insert into test(num) values (10)")
+      assert_receive {{:insert, "main", "test", 1}, :listener1}, 1000
+
+      Sqlite3.set_update_hook(context.conn, listener2_pid)
+      :ok = Sqlite3.execute(context.conn, "insert into test(num) values (10)")
+      assert_receive {{:insert, "main", "test", 2}, :listener2}, 1000
+      refute_receive {{:insert, "main", "test", 2}, :listener1}, 1000
+    end
+
+    test "notifications don't cross connections", context do
+      {:ok, listener_pid} = ChangeListener.start_link({self(), :listener})
+      {:ok, new_conn} = Sqlite3.open(context.path)
+      Sqlite3.set_update_hook(new_conn, listener_pid)
+      :ok = Sqlite3.execute(context.conn, "insert into test(num) values (10)")
+      refute_receive {{:insert, "main", "test", 1}, _}, 1000
+    end
+  end
+
+  describe "set_log_hook/1" do
+    setup do
+      {:ok, conn} = Sqlite3.open(":memory:")
+      on_exit(fn -> Sqlite3.close(conn) end)
+      {:ok, conn: conn}
+    end
+
+    test "can receive errors", %{conn: conn} do
+      assert :ok = Sqlite3.set_log_hook(self())
+
+      assert {:error, reason} = Sqlite3.prepare(conn, "some invalid sql")
+      assert reason == "near \"some\": syntax error"
+
+      assert_receive {:log, rc, msg}
+      assert rc == 1
+      assert msg == "near \"some\": syntax error in \"some invalid sql\""
+      refute_receive _anything_else
+    end
+
+    test "only one pid can listen at a time", %{conn: conn} do
+      assert :ok = Sqlite3.set_log_hook(self())
+
+      task =
+        Task.async(fn ->
+          :ok = Sqlite3.set_log_hook(self())
+          assert {:error, reason} = Sqlite3.prepare(conn, "some invalid sql")
+          assert reason == "near \"some\": syntax error"
+          assert_receive {:log, rc, msg}
+          assert rc == 1
+          assert msg == "near \"some\": syntax error in \"some invalid sql\""
+          refute_receive _anything_else
+        end)
+
+      Task.await(task)
+      refute_receive _anything_else
+    end
+
+    test "receives notifications from all connections", %{conn: conn1} do
+      assert :ok = Sqlite3.set_log_hook(self())
+      assert {:ok, conn2} = Sqlite3.open(":memory:")
+      on_exit(fn -> Sqlite3.close(conn2) end)
+
+      assert {:error, _reason} = Sqlite3.prepare(conn1, "some invalid sql 1")
+      assert_receive {:log, rc, msg}
+      assert rc == 1
+      assert msg == "near \"some\": syntax error in \"some invalid sql 1\""
+      refute_receive _anything_else
+
+      assert {:error, _reason} = Sqlite3.prepare(conn2, "some invalid sql 2")
+      assert_receive {:log, rc, msg}
+      assert rc == 1
+      assert msg == "near \"some\": syntax error in \"some invalid sql 2\""
+      refute_receive _anything_else
+    end
+  end
+
+  describe ".interrupt/1" do
+    test "double interrupting a connection" do
+      {:ok, conn} = Sqlite3.open(":memory:")
+
+      :ok = Sqlite3.interrupt(conn)
+      :ok = Sqlite3.interrupt(conn)
+    end
+
+    test "interrupting a nil connection" do
+      :ok = Sqlite3.interrupt(nil)
+    end
+
+    test "interrupting a long running query and able to close a connection" do
+      {:ok, conn} = Sqlite3.open(":memory:")
+
+      spawn(fn ->
+        :ok =
+          Sqlite3.execute(
+            conn,
+            "WITH RECURSIVE r(i) AS ( VALUES(0) UNION ALL SELECT i FROM r LIMIT 1000000000 ) SELECT i FROM r WHERE i = 1;"
+          )
+      end)
+
+      Process.sleep(100)
+      :ok = Sqlite3.interrupt(conn)
+
+      :ok = Sqlite3.close(conn)
     end
   end
 end

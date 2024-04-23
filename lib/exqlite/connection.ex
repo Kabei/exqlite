@@ -36,7 +36,8 @@ defmodule Exqlite.Connection do
     :path,
     :transaction_status,
     :status,
-    :chunk_size
+    :chunk_size,
+    :before_disconnect
   ]
 
   @type t() :: %__MODULE__{
@@ -44,7 +45,9 @@ defmodule Exqlite.Connection do
           directory: String.t() | nil,
           path: String.t(),
           transaction_status: :idle | :transaction,
-          status: :idle | :busy
+          status: :idle | :busy,
+          chunk_size: integer(),
+          before_disconnect: (t -> any) | {module, atom, [any]} | nil
         }
 
   @type journal_mode() :: :delete | :truncate | :persist | :memory | :wal | :off
@@ -55,6 +58,7 @@ defmodule Exqlite.Connection do
 
   @type connection_opt() ::
           {:database, String.t()}
+          | {:mode, Sqlite3.open_opt()}
           | {:journal_mode, journal_mode()}
           | {:temp_store, temp_store()}
           | {:synchronous, synchronous()}
@@ -73,6 +77,7 @@ defmodule Exqlite.Connection do
           | {:hard_heap_limit, integer()}
           | {:key, String.t()}
           | {:custom_pragmas, [{keyword(), integer() | boolean() | String.t()}]}
+          | {:before_disconnect, (t -> any) | {module, atom, [any]} | nil}
 
   @impl true
   @doc """
@@ -87,8 +92,10 @@ defmodule Exqlite.Connection do
     * `:database` - The path to the database. In memory is allowed. You can use
       `:memory` or `":memory:"` to designate that.
     * `:mode` - use `:readwrite` to open the database for reading and writing
-      or `:readonly` to open it in read-only mode. `:readwrite` will also create
+      , `:readonly` to open it in read-only mode or `[:readonly | :readwrite, :nomutex]`
+      to open it with no mutex mode. `:readwrite` will also create
       the database if it doesn't already exist. Defaults to `:readwrite`.
+      Note: [:readwrite, :nomutex] is not recommended.
     * `:journal_mode` - Sets the journal mode for the sqlite connection. Can be
       one of the following `:delete`, `:truncate`, `:persist`, `:memory`,
       `:wal`, or `:off`. Defaults to `:delete`. It is recommended that you use
@@ -155,6 +162,9 @@ defmodule Exqlite.Connection do
             "./priv/sqlite/\#{arch_dir}/vss0"
           ]
       ```
+    * `:before_disconnect` - A function to run before disconnect, either a
+      2-arity fun or `{module, function, args}` with the close reason and
+      `t:Exqlite.Connection.t/0` prepended to `args` or `nil` (default: `nil`)
 
   For more information about the options above, see [sqlite documentation][1]
 
@@ -190,7 +200,11 @@ defmodule Exqlite.Connection do
   end
 
   @impl true
-  def disconnect(_err, %__MODULE__{db: db}) do
+  def disconnect(err, %__MODULE__{db: db} = state) do
+    if state.before_disconnect != nil do
+      apply(state.before_disconnect, [err, state])
+    end
+
     case Sqlite3.close(db) do
       :ok -> :ok
       {:error, reason} -> {:error, %Error{message: to_string(reason)}}
@@ -539,7 +553,8 @@ defmodule Exqlite.Connection do
         path: database,
         transaction_status: :idle,
         status: :idle,
-        chunk_size: Keyword.get(options, :chunk_size)
+        chunk_size: Keyword.get(options, :chunk_size),
+        before_disconnect: Keyword.get(options, :before_disconnect, nil)
       }
 
       {:ok, state}
